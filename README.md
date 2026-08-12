@@ -119,6 +119,10 @@ It exits rather than binding somewhere wider than you asked for. `BIND_MODE=any`
 also needs `ALLOW_ANY_INTERFACE=1`. Anything past loopback or a tailnet needs
 `AUTH_TOKEN` or it refuses to start.
 
+`lan` mode serves over plain HTTP, so the token and the records cross the
+network unencrypted. Only use it on a network you trust, or put a TLS proxy in
+front.
+
 Behind a Cloudflare Tunnel, the tunnel gives you TLS but authenticates nobody:
 
 ```bash

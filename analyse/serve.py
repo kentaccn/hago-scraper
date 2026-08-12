@@ -25,6 +25,7 @@ GET only. Nothing is written. Set MEDICAL_DB to point at the database.
 """
 import hashlib
 import hmac
+import ipaddress
 import html
 import json
 import os
@@ -519,6 +520,7 @@ def md_inline(s):
 
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30                      # drop a slow client rather than pin a thread
 
     def log_message(self, *a):
         pass                                     # no request log of medical paths
@@ -649,6 +651,17 @@ def lan_ip():
         s_.close()
 
 
+def _is_private(addr):
+    """Loopback or Tailscale's CGNAT range only. A string test on "100." would
+    wave through public IPs like 100.20.x (AWS) and 100.128.x, since Tailscale
+    is 100.64.0.0/10, not all of 100.0.0.0/8."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
+
+
 def resolve_bind():
     """(address, human explanation). Exits rather than binding somewhere the
     operator did not ask for."""
@@ -694,7 +707,7 @@ if __name__ == "__main__":
         sys.exit(f"{DB} not found — run build_db.py first")
     addr, why = resolve_bind()
     shown = "127.0.0.1" if addr == "0.0.0.0" else addr
-    private = addr.startswith("127.") or addr.startswith("100.")
+    private = _is_private(addr)
     if not private and not AUTH_TOKEN:
         # The docs promise this; enforce it rather than printing a warning
         # nobody reads. Records on an unauthenticated listener is the one
