@@ -24,6 +24,15 @@ phone/   drive the iPhone through eHealth / HA GO and save each report
 parse/   turn the exported PDFs into data
   organise_hago.py    rename exports to YYYY-MM-DD_<type>_<site>.pdf from their own text
   extract_labs.py     read the lab tables into one analyte x collect-date CSV
+
+analyse/ store, search and read the result
+  build_db.py         PDFs -> SQLite: documents, quantified lab_results, text chunks
+  embed_db.py         embed the chunks locally (Ollama) for semantic search
+  query.py            CLI: semantic search, keyword search, one test over time
+  analyse.py          write an analysis report + trend/forecast charts
+  serve.py            read-only web UI, bound to a Tailscale address only
+  analytes.py         what each test is for, English and 繁體中文
+  inflammation_timeline.py   wide ESR/CRP/HGB/MCV/PLT/WBC table
 ```
 
 `phone/` needs [phone-harness](https://github.com/ShawnPana/phone-harness) and a
@@ -31,11 +40,16 @@ Mac with iPhone Mirroring paired. `parse/` needs only `pdftotext` (poppler).
 
 ## Configuration
 
+Copy `.env.example` to `~/.hago-scraper.env` and fill it in — the sweep drivers
+source it automatically. Nothing identifying is stored in the repository.
+
 ```bash
 export HA_ACCOUNT_NAME="你的名字"   # the signed-in name, filtered out of OCR rows
 export DOB_YEAR=1990                # so a date of birth is never read as a collect date
 export HAGO_DIR=~/records           # where the renamed PDFs live
 export INCOMING_DIR=~/incoming      # where fresh exports arrive
+export MEDICAL_DB=~/records/medical.db
+export OLLAMA=http://localhost:11434
 ```
 
 ## Running
@@ -46,7 +60,21 @@ YEAR=2024 phone-harness < phone/lab_sweep.py   # one pass
 python3 parse/organise_hago.py "$INCOMING_DIR"           # dry run
 python3 parse/organise_hago.py "$INCOMING_DIR" --apply   # move + rename
 python3 parse/extract_labs.py > labs.csv
+
+python3 analyse/build_db.py        # -> medical.db
+python3 analyse/embed_db.py        # local embeddings for semantic search
+python3 analyse/analyse.py         # -> analysis.md + charts/
+python3 analyse/query.py ask "gut inflammation"
+python3 analyse/serve.py           # read-only web UI on your tailnet address
 ```
+
+## Your records never enter this repository
+
+`.gitignore` blocks `*.pdf`, `*.db`, `*.csv` and the record directories, and the
+code holds no diagnosis, medication or identifier — the clinical summary in the
+report is built by searching your own database at runtime. `serve.py` binds to
+the Tailscale address only and refuses to start if it cannot find one, rather
+than falling back to `0.0.0.0` and exposing records to whatever LAN you are on.
 
 Run **one sweep at a time**. Two at once fight over the same phone and fail with
 misleading errors (see below).
