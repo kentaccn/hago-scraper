@@ -1,14 +1,29 @@
-"""Serve medical.db over Tailscale — read-only, stdlib only.
+"""Serve a medical.db over HTTP — read-only, stdlib only.
 
-    python3 serve.py                 # binds to the Tailscale IP, port 8137
+    python3 serve.py
 
-Binds to the Tailscale address only, never 0.0.0.0: these are medical records,
-and on a cafe or hotel network a wildcard bind would put them on that LAN. Only
-devices on Kenta's tailnet can reach it, and only GET is served.
+Where it listens is an explicit decision, because the payload is medical
+records. `BIND_MODE` picks one of:
 
-Zero dependencies beyond what build_db.py already needs, so it runs on the Mini
-without a venv.
+    tailscale   the tailnet address only (default). Private by construction.
+    localhost   127.0.0.1 only — the right choice behind a Cloudflare Tunnel,
+                an SSH tunnel, or any reverse proxy that terminates auth.
+    lan         this machine's LAN address. Anyone on that network can reach
+                it; only sensible on a network you control.
+    any         every interface (0.0.0.0). Requires ALLOW_ANY_INTERFACE=1 as
+                well, because on café or hotel wifi this publishes your
+                records to strangers.
+
+Or set BIND to an explicit address and skip the guesswork.
+
+If AUTH_TOKEN is set, every request must carry it (Bearer header, `ht` cookie,
+or `?token=` once, which then sets the cookie). Use it whenever the listener is
+not already private — a Cloudflare Tunnel without Access in front of it is a
+public URL.
+
+GET only. Nothing is written. Set MEDICAL_DB to point at the database.
 """
+import hmac
 import html
 import json
 import os
@@ -30,7 +45,10 @@ HERE = Path(__file__).parent
 DB = Path(os.environ.get("MEDICAL_DB", HERE / "medical.db"))
 PORT = int(os.environ.get("PORT", "8137"))
 OLLAMA = os.environ.get("OLLAMA", "http://localhost:11434")
-MODEL = "nomic-embed-text"
+MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
+# Optional shared secret. Required whenever the listener is not
+# already private (a tunnel without Access in front is a public URL).
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
 
 CSS = """
 :root{--bg:#ffffff;--fg:#1a1a1a;--mut:#666;--line:#e3e3e0;--accent:#1f4e79;
@@ -314,13 +332,23 @@ def lab(a):
                  f"可以喺覆診時提出。</div></div>")
     b.append(spark(series, r0["ref_low"], r0["ref_high"], r0["unit"]))
     b.append('<div class=wrap><table>'
-             "<tr><th>Date</th><th>Value</th><th>Reports agreeing</th></tr>")
+             "<tr><th>Date</th><th>Value</th><th>Confirmed by</th></tr>")
     for r in rows:
         cls = " class=bad" if r["flag"] else ""
         b.append(f"<tr><td>{e(r['collect_date'])}</td>"
                  f"<td{cls}>{e(r['value_raw'])} {e(r['flag'])}</td>"
                  f"<td class=mut>{r['n_sheets']}</td></tr>")
     b.append("</table></div>")
+    b.append("<div class=mut style='margin-top:.5rem'><b>“Confirmed by”</b> = how "
+             "many separate lab reports show this same number. Each sheet "
+             "repeats up to five earlier collect dates, so a value often appears "
+             "on several reports; 5 means five independent reports agree, 1 "
+             "means only one report carries it. It is a check on the reading, "
+             "not a count of blood draws."
+             "<div class=zh style='margin-top:.3rem'>「確認次數」= 有幾多份"
+             "化驗報告顯示同一個數值。每張化驗單會重複列出之前最多五次抽血日期，"
+             "所以同一個結果通常會出現喺幾份報告上；5 即係五份報告都一致，"
+             "1 即係只有一份。呢個係核對讀數用，唔係抽血次數。</div></div>")
     return page(a, "".join(b))
 
 
@@ -349,7 +377,7 @@ def embed_query(text):
 
 def search(q):
     form = (f"<form method=get action='/search'><input type=search name=q "
-            f"placeholder='e.g. gut inflammation, knee pain, adalimumab' "
+            f"placeholder='e.g. inflammation, kidney function, a medication name' "
             f"value='{e(q)}' autofocus></form>")
     if not q:
         return page("Search", form + "<p class=mut>Meaning-based search over "
@@ -469,9 +497,47 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def authorised(self, q):
+        """Bearer header, `ht` cookie, or ?token= once. Constant-time compare."""
+        if not AUTH_TOKEN:
+            return True
+        given = ""
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            given = auth[7:]
+        if not given:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "ht":
+                    given = v
+        if not given:
+            given = (q.get("token") or [""])[0]
+        return hmac.compare_digest(given, AUTH_TOKEN)
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if not self.authorised(q):
+            body = page("Not authorised",
+                        "<p>This instance requires a token. Append "
+                        "<code>?token=…</code> once and it will be remembered "
+                        "for this browser.</p>")
+            self.send_response(401)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if AUTH_TOKEN and q.get("token"):
+            # move the secret out of the URL bar and into a cookie
+            self.send_response(302)
+            self.send_header("Location", u.path or "/")
+            self.send_header("Set-Cookie",
+                             f"ht={AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax"
+                             + ("; Secure" if os.environ.get("BEHIND_TLS") else ""))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         one = lambda k: (q.get(k) or [""])[0]                    # noqa: E731
         try:
             if u.path == "/":
@@ -502,8 +568,8 @@ class H(BaseHTTPRequestHandler):
 
 
 def tailscale_ip():
-    """The tailnet address, without depending on the tailscale CLI being on
-    PATH -- under launchd it is not. Tailscale hands out 100.64.0.0/10, so the
+    """The tailnet address, without depending on the `tailscale` CLI being on
+    PATH — under launchd it is not. Tailscale hands out 100.64.0.0/10, so the
     interface list is the more reliable source."""
     try:
         out = subprocess.run(["ifconfig"], capture_output=True, text=True,
@@ -514,7 +580,8 @@ def tailscale_ip():
     except Exception:                                            # noqa: BLE001
         pass
     for cmd in (["tailscale", "ip", "-4"],
-                ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "ip", "-4"]):
+                ["/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+                 "ip", "-4"]):
         try:
             out = subprocess.run(cmd, capture_output=True, text=True,
                                  timeout=8).stdout.strip().splitlines()
@@ -525,12 +592,62 @@ def tailscale_ip():
     return None
 
 
+def lan_ip():
+    """This machine's primary LAN address, or None."""
+    import socket
+    s_ = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s_.connect(("192.0.2.1", 9))     # TEST-NET-1; no packet is actually sent
+        return s_.getsockname()[0]
+    except Exception:                                            # noqa: BLE001
+        return None
+    finally:
+        s_.close()
+
+
+def resolve_bind():
+    """(address, human explanation). Exits rather than binding somewhere the
+    operator did not ask for."""
+    explicit = os.environ.get("BIND")
+    if explicit:
+        return explicit, f"explicit BIND={explicit}"
+    mode = os.environ.get("BIND_MODE", "tailscale").lower()
+    if mode == "localhost":
+        return "127.0.0.1", ("loopback only — reach it through a tunnel or "
+                             "reverse proxy")
+    if mode == "tailscale":
+        ip = tailscale_ip()
+        if not ip:
+            sys.exit("BIND_MODE=tailscale but no tailnet address was found.\n"
+                     "Refusing to fall back to a wider interface with medical "
+                     "records on board.\nStart Tailscale, or choose "
+                     "BIND_MODE=localhost / lan / any, or set BIND=<address>.")
+        return ip, "tailnet address only"
+    if mode == "lan":
+        ip = lan_ip()
+        if not ip:
+            sys.exit("BIND_MODE=lan but no LAN address was found. Set BIND.")
+        return ip, f"LAN address {ip} — everyone on this network can reach it"
+    if mode == "any":
+        if os.environ.get("ALLOW_ANY_INTERFACE") != "1":
+            sys.exit("BIND_MODE=any exposes medical records on every interface, "
+                     "including whatever wifi you are on.\nSet "
+                     "ALLOW_ANY_INTERFACE=1 as well if you really mean it, and "
+                     "set AUTH_TOKEN.")
+        return "0.0.0.0", "EVERY interface — make sure AUTH_TOKEN is set"
+    sys.exit(f"unknown BIND_MODE={mode!r} "
+             "(tailscale | localhost | lan | any, or set BIND)")
+
+
 if __name__ == "__main__":
     if not DB.exists():
         sys.exit(f"{DB} not found — run build_db.py first")
-    ip = os.environ.get("BIND") or tailscale_ip()
-    if not ip:
-        sys.exit("could not determine the Tailscale IP; refusing to bind to "
-                 "0.0.0.0 with medical records on board. Set BIND=<ip> to override.")
-    print(f"medical.db → http://{ip}:{PORT}  (Tailscale only, read-only)")
-    ThreadingHTTPServer((ip, PORT), H).serve_forever()
+    addr, why = resolve_bind()
+    shown = "127.0.0.1" if addr == "0.0.0.0" else addr
+    if not AUTH_TOKEN and addr not in ("127.0.0.1",) and \
+            not (addr.startswith("100.") or addr.startswith("127.")):
+        print("WARNING: listening beyond loopback/tailnet with no AUTH_TOKEN set.",
+              file=sys.stderr)
+    print(f"{DB.name} -> http://{shown}:{PORT}  ({why}"
+          + (", token required)" if AUTH_TOKEN else ")"))
+    ThreadingHTTPServer((addr, PORT), H).serve_forever()
