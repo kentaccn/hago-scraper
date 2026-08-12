@@ -53,12 +53,40 @@ def confirm():
         wait(2)
 
 
+YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+def on_list():
+    """True when the record list is showing.
+
+    The radiology screen swaps the 選擇年份 button for the selected year once
+    one is chosen, so keying only on 選擇年份 makes an open list look like a
+    navigation failure.
+    """
+    if find_zh("選擇年份", exact=True):
+        return True
+    labels = [o["text"].strip() for o in ocr_zh()]
+    return any(YEAR_RE.match(t) for t in labels) and \
+        any("院" in t for t in labels)
+
+
+def year_button():
+    """The control that opens the year picker: either the placeholder or the
+    year currently selected."""
+    if find_zh("選擇年份", exact=True):
+        return find_zh("選擇年份", exact=True)[-1]
+    for o in sorted(ocr_zh(), key=lambda o: o["y"]):
+        if YEAR_RE.match(o["text"].strip()):
+            return o
+    return None
+
+
 def to_list():
     for _ in range(5):
-        if find_zh("選擇年份", exact=True):
+        if on_list():
             return True
         back()
-    return bool(find_zh("選擇年份", exact=True))
+    return on_list()
 
 
 def rows():
@@ -108,14 +136,19 @@ def _walk_to_lab():
     confirm()
     for step in ("常用功能", "檢查", "放射紀錄"):
         for _ in range(2):
-            if find_zh("選擇年份", exact=True):
+            if on_list():
                 return True
             if _reveal(step):
                 wait_stable()
-                tap_zh(step, exact=True)
+                try:
+                    # the label can scroll away between finding and tapping;
+                    # a miss here must not abort the whole sweep
+                    tap_zh(step, exact=True)
+                except RuntimeError:
+                    continue
                 wait_stable()
                 wait(2.5)
-    return bool(find_zh("選擇年份", exact=True))
+    return on_list()
 
 
 def goto_lab():
@@ -123,7 +156,7 @@ def goto_lab():
     # A pending 確認 privacy modal swallows every back-tap, so clear it first
     # or navigation can never recover from a half-opened record.
     confirm()
-    if find_zh("選擇年份", exact=True):
+    if on_list():
         return True
     for _ in range(6):                     # climb out of any detail view
         if find_zh("常用功能", exact=True) or find_zh("檢查", exact=True):
@@ -136,11 +169,18 @@ def goto_lab():
 
 
 def pick_year(y):
-    if not goto_lab():
+    for _ in range(2):
+        if goto_lab():
+            break
+        hard_reset()
+    else:
         return False
     if not to_list():
         return False
-    tap_zh("選擇年份", exact=True)
+    btn = year_button()
+    if not btn:
+        return False
+    tap(btn["x"], btn["y"])
     wait_stable()
     wait(1.5)
     h = find_zh(y, exact=True)
