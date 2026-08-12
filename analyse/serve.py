@@ -23,6 +23,7 @@ public URL.
 
 GET only. Nothing is written. Set MEDICAL_DB to point at the database.
 """
+import hashlib
 import hmac
 import html
 import json
@@ -58,6 +59,10 @@ MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 # Optional shared secret. Required whenever the listener is not
 # already private (a tunnel without Access in front is a public URL).
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
+# The cookie holds a value derived from the token, not the token itself, so a
+# stolen cookie cannot be replayed as a Bearer credential elsewhere.
+COOKIE_VALUE = (hashlib.sha256(("hago-cookie:" + AUTH_TOKEN).encode())
+                .hexdigest() if AUTH_TOKEN else "")
 
 CSS = """
 :root{--bg:#ffffff;--fg:#1a1a1a;--mut:#666;--line:#e3e3e0;--accent:#1f4e79;
@@ -539,8 +544,8 @@ class H(BaseHTTPRequestHandler):
         if not given:
             for part in (self.headers.get("Cookie") or "").split(";"):
                 k, _, v = part.strip().partition("=")
-                if k == "ht":
-                    given = v
+                if k == "ht" and hmac.compare_digest(v, COOKIE_VALUE):
+                    return True
         if not given:
             given = (q.get("token") or [""])[0]
         return hmac.compare_digest(given, AUTH_TOKEN)
@@ -564,7 +569,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Location", u.path or "/")
             self.send_header("Set-Cookie",
-                             f"ht={AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax"
+                             f"ht={COOKIE_VALUE}; Path=/; HttpOnly; SameSite=Lax"
                              + ("; Secure" if os.environ.get("BEHIND_TLS") else ""))
             self.send_header("Content-Length", "0")
             self.end_headers()

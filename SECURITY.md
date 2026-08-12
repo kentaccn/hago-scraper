@@ -57,6 +57,12 @@ python3 -c "import secrets;print(secrets.token_urlsafe(32))"
 Requests then need it as a `Bearer` header, an `ht` cookie, or `?token=…` once.
 Set `BEHIND_TLS=1` behind a TLS proxy so the cookie is marked `Secure`.
 
+The `?token=` form puts the secret in a URL, so it reaches browser history and
+any proxy or CDN log before the redirect moves it into a cookie. Prefer the
+`Bearer` header where you can. The cookie stores a value derived from the token
+rather than the token itself, so a stolen cookie cannot be replayed as a Bearer
+credential.
+
 A Cloudflare Tunnel provides TLS and hides your IP. It does not authenticate
 anyone. Put Cloudflare Access in front of it, or use `AUTH_TOKEN`, or both, and
 run with `BIND_MODE=localhost` so nothing else can reach the port.
