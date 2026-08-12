@@ -1,93 +1,100 @@
 # Security
 
-This tool handles medical records. Short document, worth reading once.
+## What is sensitive
 
-## What is actually sensitive
+The exported PDFs, the database, the CSVs, the charts and the generated report.
+They carry your name, ID number, date of birth, hospital numbers, clinicians,
+diagnoses and results.
 
-The **records** are: the exported PDFs, the database built from them, the CSVs,
-the charts, and the generated report. Those carry your name, ID number, date of
-birth, hospital numbers, clinicians, diagnoses and results.
+The code is not sensitive and is written to stay that way. Names, the
+date-of-birth year, paths and hosts come from the environment. If you find a
+diagnosis or a drug name hard-coded in a source file, that is a bug.
 
-The **code** is not sensitive, and is written to stay that way. Everything
-identifying — your name, date-of-birth year, paths, hosts — is read from the
-environment. If you ever find a diagnosis or a drug name hard-coded in a source
-file, that is a bug worth fixing before you share the code.
+## Storing the files
 
-## Where to keep records
+Keep PDFs, databases, CSVs and reports outside the repository, in a directory
+only your account can read:
 
-- **Outside the repository.** `.gitignore` blocks `*.pdf`, `*.db`, `*.csv` and
-  the record directories, but that is a backstop, not a plan.
-- **`chmod 700` the directory, `chmod 600` the files.** On a shared or managed
-  Mac, default permissions leave your database readable by other local accounts.
-  The pipeline sets `600` on everything it generates; `check_setup.py` will tell
-  you if a directory is too open.
-- **Encrypt the disk.** FileVault, on every machine that holds a copy.
-- **Treat iCloud as a pipe.** It is the only transport that works off the phone,
-  but move files to local storage and delete the cloud copy immediately. Don't
-  leave records sitting in someone else's storage indefinitely.
-- Keep a backup of the **source PDFs**. Everything else can be rebuilt; those
-  cannot.
+```bash
+chmod 700 ~/records
+chmod 600 ~/records/*
+```
+
+The pipeline sets `600` on what it generates, and `check_setup.py` warns if a
+directory is readable by others.
+
+Turn on FileVault on any Mac that stores the files.
+
+iCloud Drive is the only transport that works off the phone. Delete the iCloud
+copy once the file is local.
+
+Keep a backup of the source PDFs. Everything else can be rebuilt from them.
+
+`.gitignore` only catches mistakes. The repository is still the wrong place
+to keep records.
 
 ## Serving it
 
-`serve.py` is read-only and GET-only, but where it listens is a real decision.
-Set `BIND_MODE`:
+`serve.py` is read-only and GET-only. Set `BIND_MODE`:
 
 | Mode | Listens on | Use when |
 |---|---|---|
-| `tailscale` (default) | your tailnet address only | you want it on your own devices and nowhere else |
-| `localhost` | `127.0.0.1` | you are putting a Cloudflare Tunnel, SSH tunnel or reverse proxy in front |
-| `lan` | your LAN address | on a network you control, and you accept everyone on it can reach it |
-| `any` | every interface | almost never; requires `ALLOW_ANY_INTERFACE=1` as well |
+| `tailscale` (default) | your tailnet address | your own devices, nowhere else |
+| `localhost` | `127.0.0.1` | behind a Cloudflare Tunnel, SSH tunnel or proxy |
+| `lan` | your LAN address | a network you control |
+| `any` | every interface | almost never, and needs `ALLOW_ANY_INTERFACE=1` |
 
-It **refuses to start** rather than silently choosing something wider than you
-asked for. That guard exists because on café or hotel wifi, a `0.0.0.0` bind
-publishes your medical records to that network.
+It exits rather than binding wider than you asked for. On café or hotel wifi a
+`0.0.0.0` bind would put your records on that network.
 
-### If you expose it beyond your own machine
+Past loopback or a tailnet it refuses to start without `AUTH_TOKEN`. Generate
+one:
 
-- **Set `AUTH_TOKEN`.** Then every request needs it, as a `Bearer` header, an
-  `ht` cookie, or `?token=…` once. Use a long random value:
-  `python3 -c "import secrets;print(secrets.token_urlsafe(32))"`.
-- **A Cloudflare Tunnel without Access in front of it is a public URL.** The
-  tunnel gives you TLS and hides your IP; it does not authenticate anyone. Put
-  Cloudflare Access on it, or rely on `AUTH_TOKEN`, or both.
-- Run with `BIND_MODE=localhost` behind the tunnel so nothing else can reach the
-  port directly.
-- Set `BEHIND_TLS=1` so the auth cookie is marked `Secure`.
-- There is no rate limiting and no lockout. It is a personal tool, not a public
-  service.
+```bash
+python3 -c "import secrets;print(secrets.token_urlsafe(32))"
+```
 
-## Sending data to AI models
+Requests then need it as a `Bearer` header, an `ht` cookie, or `?token=…` once.
+Set `BEHIND_TLS=1` behind a TLS proxy so the cookie is marked `Secure`.
 
-- **Embeddings are local.** `embed_db.py` uses Ollama on a host you control, so
-  document text is not sent to a hosted API. Keep it that way — a hosted
-  embedding endpoint would mean uploading every report.
-- **Never paste records into a hosted chat model.**
-- **Reviewing this code with a cloud model is fine; reviewing your data is not.**
-  If you do send code for review, check it first for clinical facts, not just
-  identifiers — a diagnosis plus a drug plus an allergy list is medical
-  information about you even with your name removed. Grep for diagnoses, drug
-  names, allergies, procedures and event dates before sending anything.
+A Cloudflare Tunnel provides TLS and hides your IP. It does not authenticate
+anyone. Put Cloudflare Access in front of it, or use `AUTH_TOKEN`, or both, and
+run with `BIND_MODE=localhost` so nothing else can reach the port.
 
-## Automation risk
+There is no rate limiting and no lockout.
 
-The phone scripts tap through a live logged-in medical app. Consequences worth
-knowing:
+## Hosted AI services
 
-- They can only read and share; nothing in the flow deletes or amends records.
-- A pending confirmation dialog can swallow taps, and a stray tap in an unknown
-  state does something you did not intend. If a run dies, look at the screen
-  before relaunching.
-- **Move exported files out only when no sweep is running.** Clearing the
-  transfer folder mid-sweep loses records that are already marked as exported.
-- Run **one sweep at a time**. Concurrent runs fight over the phone and fail in
-  ways that look like app faults.
-- Sessions expire after a few hours; log in yourself. Do not attempt to automate
-  the login.
+`embed_db.py` uses Ollama on a host you control, so report text is not sent to
+an external embedding API. A hosted endpoint would mean uploading every report.
+
+Do not paste records into a hosted chat model.
+
+Reviewing the code with a cloud model is fine. Before sending it, check for
+diagnoses, drug names, allergies, procedures and event dates, not only names and
+ID numbers. A diagnosis plus a drug plus an allergy list identifies someone even
+without a name attached. That mistake has already been made once in this
+project.
+
+## Automating a live medical app
+
+The scripts tap through a logged-in app. They only read and share; nothing in
+the flow deletes or amends a record.
+
+Run one sweep at a time. Two fight over the phone and fail in ways that look
+like app faults.
+
+Move exported files out only when no sweep is running. A record is ledgered the
+moment it saves, so clearing the folder mid-run marks it done with no file to
+show for it.
+
+If a run dies, look at the screen before relaunching. A pending dialog swallows
+taps, and a tap in an unexpected state does something you did not intend.
+
+Sessions expire after a few hours. Log in yourself; do not automate the login.
 
 ## Reporting a problem
 
-Personal tool, no security team. If you find a flaw that would expose records —
-a path traversal in `serve.py`, a bind that ignores `BIND_MODE`, records landing
-in a commit — treat it as urgent and fix it before running the pipeline again.
+There is no security team. If you find something that would expose records, a
+path traversal in `serve.py`, a bind that ignores `BIND_MODE`, records reaching
+a commit, fix it before running the pipeline again.
