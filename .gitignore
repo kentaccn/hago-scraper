@@ -1,0 +1,11 @@
+# Never commit records or anything derived from them.
+*.pdf
+*.db
+*.csv
+*.json
+HAGO/
+records/
+incoming/
+__pycache__/
+*.pyc
+.DS_Store
