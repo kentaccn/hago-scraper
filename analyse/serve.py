@@ -339,16 +339,29 @@ def lab(a):
                  f"<td{cls}>{e(r['value_raw'])} {e(r['flag'])}</td>"
                  f"<td class=mut>{r['n_sheets']}</td></tr>")
     b.append("</table></div>")
-    b.append("<div class=mut style='margin-top:.5rem'><b>“Confirmed by”</b> = how "
-             "many separate lab reports show this same number. Each sheet "
-             "repeats up to five earlier collect dates, so a value often appears "
-             "on several reports; 5 means five independent reports agree, 1 "
-             "means only one report carries it. It is a check on the reading, "
-             "not a count of blood draws."
-             "<div class=zh style='margin-top:.3rem'>「確認次數」= 有幾多份"
-             "化驗報告顯示同一個數值。每張化驗單會重複列出之前最多五次抽血日期，"
-             "所以同一個結果通常會出現喺幾份報告上；5 即係五份報告都一致，"
-             "1 即係只有一份。呢個係核對讀數用，唔係抽血次數。</div></div>")
+    newest = con().execute("SELECT MAX(collect_date) FROM lab_results").fetchone()[0]
+    b.append(
+        "<div class=card style='margin-top:.6rem'>"
+        "<b>What “Confirmed by” means</b>"
+        "<div style='margin-top:.4rem'>It is a <b>transcription check, not a "
+        "confidence level</b> — and nothing to do with how accurate the "
+        "laboratory was. The lab value is whatever the lab measured. This "
+        "number only says: <b>how many separate report PDFs I found showing "
+        "this same figure</b>, as a check that I read the table correctly.</div>"
+        "<div style='margin-top:.4rem'>Each sheet reprints the previous five "
+        "collect dates, so an older result accumulates copies as later sheets "
+        "repeat it. <b>A “1” on the newest draw is normal, not weak</b> — no "
+        "later sheet exists yet to repeat it.</div>"
+        f"<div class=mut style='margin-top:.4rem'>Your latest draw is {newest}, "
+        "so its values mostly show 1. Values from a few years back show 4–5 "
+        "because several sheets carried them.</div>"
+        "<div class=zh style='margin-top:.5rem'>"
+        "「確認次數」係<b>核對抄寫嘅指標，唔係信心水平</b>，亦同化驗所準唔準冇關。"
+        "化驗數值係化驗所量出嚟嘅，呢個數淨係話你知：<b>我搵到幾多份報告寫住同一個數字</b>，"
+        "用嚟核對我有冇睇錯張表。<br>"
+        "每張化驗單會重印之前五次抽血結果，所以舊嘅結果會被後來嘅單重複列出，次數自然多。"
+        "<b>最新一次抽血顯示「1」係正常，唔代表信唔過</b> —— 因為仲未有之後嘅單去重複佢。"
+        "</div></div>")
     return page(a, "".join(b))
 
 
