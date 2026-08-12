@@ -10,6 +10,14 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 HERE = Path(__file__).parent
 MARKERS = [("ESR, automated", "ESR"), ("C-Reactive Protein", "CRP"),
            ("HGB", "HGB"), ("MCV", "MCV"), ("PLT", "PLT"), ("WBC", "WBC")]
@@ -44,11 +52,11 @@ out += [f"| {s} | {refs.get(s, '')} |" for s in shorts]
 out += ["", "Every value in `lab-values.csv`; 63 lab-flagged out-of-range "
         "results across all analytes.", ""]
 
-md_out = HERE / "inflammation-timeline.md"
+md_out = config.output_dir() / "inflammation-timeline.md"
 md_out.write_text("\n".join(out))
 md_out.chmod(0o600)
 
-csv_out = HERE / "inflammation-timeline.csv"
+csv_out = config.output_dir() / "inflammation-timeline.csv"
 with open(csv_out, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["date"] + shorts)

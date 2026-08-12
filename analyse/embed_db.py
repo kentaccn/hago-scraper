@@ -18,10 +18,18 @@ from pathlib import Path
 
 import numpy as np
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 DB = Path(os.environ.get("MEDICAL_DB",
                          Path(__file__).parent / "medical.db"))
 HOST = os.environ.get("OLLAMA", "http://localhost:11434")
-MODEL = "nomic-embed-text"
+MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 BATCH = 16
 
 
@@ -69,8 +77,12 @@ def main():
         done += len(batch)
         print(f"  {done}/{len(todo)}", end="\r", flush=True)
     n = con.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
-    print(f"\n{n} chunks embedded ({MODEL}, "
-          f"{con.execute('SELECT dim FROM embeddings LIMIT 1').fetchone()[0]}-d)")
+    if not n:
+        # every batch failed -- say so instead of crashing on a missing row
+        sys.exit(f"\nno chunks were embedded. Is Ollama reachable at {HOST} "
+                 f"and is {MODEL} pulled?")
+    dim = con.execute("SELECT dim FROM embeddings LIMIT 1").fetchone()[0]
+    print(f"\n{n} chunks embedded ({MODEL}, {dim}-d)")
     con.close()
 
 

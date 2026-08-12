@@ -31,6 +31,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import traceback
 import urllib.request
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,14 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 import analytes
+
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
 
 HERE = Path(__file__).parent
 DB = Path(os.environ.get("MEDICAL_DB", HERE / "medical.db"))
@@ -99,6 +108,14 @@ def page(title, body):
             f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
             f"<body>{NAV}<main><h1>{html.escape(title)}</h1>{body}</main>"
             f"</body></html>").encode()
+
+
+def mark(snippet):
+    """FTS snippet -> safe HTML. The text comes from a PDF, so it is escaped
+    first and the highlight markers re-applied afterwards; inserting it raw
+    would let a crafted document inject script into this page."""
+    return (html.escape(snippet or "").replace("\x02", "<b>")
+            .replace("\x03", "</b>"))
 
 
 def e(x):
@@ -217,7 +234,7 @@ def overview():
          f"<b>{g('SELECT COUNT(DISTINCT collect_date) FROM lab_results')}</b> draw dates · "
          f"<b>{g('SELECT COUNT(*) FROM documents')}</b> documents"
          f"<div class=mut>{g('SELECT MIN(collect_date) FROM lab_results')} → {latest}"
-         f" · served read-only over Tailscale</div></div>"]
+         f" · read-only</div></div>"]
     b.append(f"<h2>Latest draw — {e(latest)}</h2><div class=wrap><table>"
              "<tr><th>Test</th><th>Value</th><th>Reference</th></tr>")
     for r in c.execute("SELECT analyte, value_raw, flag, unit, ref_low, ref_high "
@@ -423,13 +440,13 @@ def search(q):
         b.append("<h2>Exact matches</h2>")
         hits = c.execute(
             "SELECT d.id, d.filename, d.doc_date, "
-            "snippet(docs_fts,1,'<b>','</b>',' … ',14) s "
+            "snippet(docs_fts,1,'\x02','\x03',' … ',14) s "
             "FROM docs_fts JOIN documents d ON d.id=docs_fts.rowid "
             "WHERE docs_fts MATCH ? ORDER BY rank LIMIT 8", (q,)).fetchall()
         for r in hits:
             b.append(f"<div class=card><a href='/doc?id={r['id']}'>{e(r['filename'])}</a>"
                      f"<span class=mut> {e(r['doc_date'] or '')}</span>"
-                     f"<div>{r['s']}</div></div>")
+                     f"<div>{mark(r['s'])}</div></div>")
         if not hits:
             b.append("<p class=mut>No exact matches.</p>")
     except sqlite3.OperationalError:
@@ -506,6 +523,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
@@ -576,8 +594,12 @@ class H(BaseHTTPRequestHandler):
                 if p.suffix == ".png" and p.parent == HERE / "charts" and p.exists():
                     return self.send(p.read_bytes(), "image/png")
             self.send(page("Not found", "<p>No such page.</p>"), code=404)
-        except Exception as ex:                                  # noqa: BLE001
-            self.send(page("Error", f"<pre>{e(ex)}</pre>"), code=500)
+        except Exception:                                        # noqa: BLE001
+            # log locally, tell the client nothing: exception text leaks
+            # filesystem paths and configuration
+            traceback.print_exc(file=sys.stderr)
+            self.send(page("Error", "<p>Something went wrong. Details are in "
+                                    "the server log.</p>"), code=500)
 
 
 def tailscale_ip():
@@ -623,6 +645,12 @@ def resolve_bind():
     operator did not ask for."""
     explicit = os.environ.get("BIND")
     if explicit:
+        # An explicit address is still an address: 0.0.0.0 here would otherwise
+        # walk straight past the ALLOW_ANY_INTERFACE gate below.
+        if explicit in ("0.0.0.0", "::") and \
+                os.environ.get("ALLOW_ANY_INTERFACE") != "1":
+            sys.exit(f"BIND={explicit} listens on every interface. Set "
+                     "ALLOW_ANY_INTERFACE=1 and AUTH_TOKEN if you mean it.")
         return explicit, f"explicit BIND={explicit}"
     mode = os.environ.get("BIND_MODE", "tailscale").lower()
     if mode == "localhost":
@@ -657,10 +685,15 @@ if __name__ == "__main__":
         sys.exit(f"{DB} not found — run build_db.py first")
     addr, why = resolve_bind()
     shown = "127.0.0.1" if addr == "0.0.0.0" else addr
-    if not AUTH_TOKEN and addr not in ("127.0.0.1",) and \
-            not (addr.startswith("100.") or addr.startswith("127.")):
-        print("WARNING: listening beyond loopback/tailnet with no AUTH_TOKEN set.",
-              file=sys.stderr)
+    private = addr.startswith("127.") or addr.startswith("100.")
+    if not private and not AUTH_TOKEN:
+        # The docs promise this; enforce it rather than printing a warning
+        # nobody reads. Records on an unauthenticated listener is the one
+        # failure this tool must not allow.
+        sys.exit(f"Refusing to serve medical records on {addr} without "
+                 "AUTH_TOKEN.\nGenerate one:\n  python3 -c \"import secrets;"
+                 "print(secrets.token_urlsafe(32))\"\n"
+                 "or use BIND_MODE=localhost behind a tunnel.")
     print(f"{DB.name} -> http://{shown}:{PORT}  ({why}"
           + (", token required)" if AUTH_TOKEN else ")"))
     ThreadingHTTPServer((addr, PORT), H).serve_forever()

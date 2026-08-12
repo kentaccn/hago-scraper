@@ -20,10 +20,18 @@ from pathlib import Path
 
 import numpy as np
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 DB = Path(os.environ.get("MEDICAL_DB",
                          Path(__file__).parent / "medical.db"))
 HOST = os.environ.get("OLLAMA", "http://localhost:11434")
-MODEL = "nomic-embed-text"
+MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 
 
 def con():

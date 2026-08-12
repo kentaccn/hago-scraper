@@ -15,6 +15,14 @@ import sys
 import urllib.request
 from pathlib import Path
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 OK, WARN, BAD = "  ok  ", " note ", " MISS "
 problems = 0
 notes = 0
@@ -81,13 +89,14 @@ if env.exists():
 else:
     line(WARN, str(env), "copy .env.example there and fill it in")
 
-for var, why, hard in (("HAGO_DIR", "where renamed PDFs live", False),
-                       ("MEDICAL_DB", "where the database is written", False),
+for var, why, hard in (("HAGO_DIR", "where renamed PDFs live", True),
+                       ("MEDICAL_DB", "where the database is written", True),
                        ("HA_ACCOUNT_NAME", "filtered out of OCR rows", False),
                        ("DOB_YEAR", "so a DOB is never read as a collect date",
                         False)):
     val = os.environ.get(var)
-    line(OK if val else WARN, var, val or f"unset — {why}")
+    line(OK if val else (BAD if hard else WARN), var,
+         val or f"unset — {why}")
 
 for var in ("HAGO_DIR", "MEDICAL_DB"):
     val = os.environ.get(var)
@@ -97,9 +106,22 @@ for var in ("HAGO_DIR", "MEDICAL_DB"):
     target = p if p.is_dir() else p.parent
     if target.exists():
         mode = stat.S_IMODE(target.stat().st_mode)
-        want = 0o700
-        line(OK if mode <= want else WARN, f"permissions on {target}",
-             "" if mode <= want else f"mode {oct(mode)} — chmod 700 recommended")
+        # test the group/other bits, not the numeric value: 0o677 is NOT safer
+        # than 0o700 even though it compares smaller
+        leaky = mode & 0o077
+        line(OK if not leaky else WARN, f"permissions on {target}",
+             "" if not leaky else
+             f"mode {oct(mode)} is readable by others — chmod 700 {target}")
+
+out = os.environ.get("MEDICAL_OUT")
+repo = Path(__file__).resolve().parent
+target = Path(out).expanduser() if out else None
+if target is None and os.environ.get("MEDICAL_DB"):
+    target = Path(os.environ["MEDICAL_DB"]).expanduser().parent
+if target:
+    inside = repo == target or repo in target.parents
+    line(WARN if inside else OK, "generated reports go outside the checkout",
+         f"{target} is inside the repo — set MEDICAL_OUT" if inside else str(target))
 
 print("\n== optional: local embeddings ==")
 host = os.environ.get("OLLAMA", "http://localhost:11434")

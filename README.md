@@ -1,4 +1,60 @@
-# hago-scraper
+<p align="center">
+  <img src="docs/assets/hago-icon.webp" alt="HA Go" height="72">
+  &nbsp;&nbsp;
+  <img src="docs/assets/ehealth-logo.png" alt="醫健通 eHealth" height="72">
+</p>
+
+<h1 align="center">hago-scraper</h1>
+
+<p align="center">
+  Get your own Hong Kong Hospital Authority medical records off your phone —
+  then actually query them.<br>
+  <sub>Export · parse · SQLite · local semantic search · private web UI</sub>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="ANDROID.md">Android</a> ·
+  <a href="AGENTS.md">AI agents</a> ·
+  <a href="#limitations--what-this-does-not-capture">Limitations</a>
+</p>
+
+---
+
+## Quick start
+
+Ten minutes, assuming the phone side is already paired.
+
+```bash
+# 1. install
+git clone https://github.com/<you>/hago-scraper.git && cd hago-scraper
+brew install poppler && pip3 install numpy scipy matplotlib
+
+# 2. configure — nothing identifying ever lives in the repo
+cp .env.example ~/.hago-scraper.env && chmod 600 ~/.hago-scraper.env
+$EDITOR ~/.hago-scraper.env          # set HAGO_DIR, MEDICAL_DB, DOB_YEAR
+
+# 3. check before you start
+python3 check_setup.py               # tells you exactly what is missing
+
+# 4. export from the phone (log into the app by hand first)
+./phone/sweep_year.sh 2024
+
+# 5. name, file, and build
+python3 parse/organise_hago.py "$INCOMING_DIR"           # dry run
+python3 parse/organise_hago.py "$INCOMING_DIR" --apply
+python3 analyse/build_db.py
+
+# 6. read it
+python3 analyse/query.py lab ESR
+python3 analyse/serve.py             # private web UI
+```
+
+**Already have the PDFs?** Skip step 4 — everything from step 5 works on any
+folder of HA lab reports, on any OS with `pdftotext`.
+
+---
 
 Get your own Hong Kong Hospital Authority medical records off your iPhone, and
 turn the PDFs into data you can actually query.

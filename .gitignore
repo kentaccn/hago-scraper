@@ -1,11 +1,29 @@
-# Never commit records or anything derived from them.
+# Never commit records, or anything derived from them.
 *.pdf
 *.db
+*.db-*
+*.building
 *.csv
 *.json
+!package.json
+
+# Generated reports and charts are medical data too. They should be written
+# outside the checkout (MEDICAL_OUT), but ignore them here as a backstop.
+analysis.md
+cross-validation.md
+inflammation-timeline.md
+appointment-*.md
+charts/
+*.png
+# ...but the documentation artwork is not medical data
+!docs/assets/*.png
+!docs/assets/*.webp
+
+# Record directories
 HAGO/
 records/
 incoming/
+
 __pycache__/
 *.pyc
 .DS_Store

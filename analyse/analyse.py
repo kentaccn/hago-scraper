@@ -6,6 +6,7 @@ explanation the report says so. n is small -- 27 draw dates over seven years --
 so correlations are reported with their n and treated as hints, not findings.
 """
 import os
+import sys
 import sqlite3
 import textwrap
 from collections import defaultdict
@@ -14,9 +15,17 @@ from pathlib import Path
 
 import numpy as np
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 HERE = Path(__file__).parent
 DB = Path(os.environ.get("MEDICAL_DB", HERE / "medical.db"))
-CHARTS = HERE / "charts"
+CHARTS = config.output_dir() / "charts"
 
 # Markers worth plotting and discussing, in reading order.
 FOCUS = ["ESR", "CRP", "HGB", "HCT", "MCV", "PLT", "WBC"]
@@ -59,7 +68,11 @@ def charts(c):
         import matplotlib.pyplot as plt
     except Exception:                                    # noqa: BLE001
         return []
-    CHARTS.mkdir(exist_ok=True)
+    CHARTS.mkdir(parents=True, exist_ok=True)
+    try:
+        CHARTS.chmod(0o700)
+    except OSError:
+        pass
     made = []
     panels = [("Inflammation", ["ESR", "CRP"]),
               ("Red cells", ["HGB", "HCT", "MCV"]),
@@ -116,6 +129,7 @@ def charts(c):
         fig.tight_layout()
         out = CHARTS / f"{title.lower().replace(' ', '_')}.png"
         fig.savefig(out, dpi=130, facecolor="white")
+        config.secure(out)
         plt.close(fig)
         made.append(out.name)
     return made
@@ -207,9 +221,14 @@ def main():
     # Benjamini-Hochberg correction across every analyte, and a permutation test
     # that pays for the search over split points. Quoting a hand-picked split
     # and its naive p-value would manufacture significance.
-    import stats_tests as st
-    st_series, cens = st.load_series(c)
-    tr = st.trends(st_series)
+    try:
+        import stats_tests as st
+    except ImportError:                       # scipy not installed
+        st = None
+    st_series, cens = (st.load_series(c) if st else ({}, {}))
+    tr = st.trends(st_series) if st else []
+    if st is None:
+        A('\n*(scipy is not installed, so the trend and change-point statistics are omitted.)*')
     esr_tr = next((r for r in tr if r["analyte"] == "ESR"), None)
     n_sig = sum(1 for r in tr if r["q"] < 0.05)
     if esr_tr:
@@ -222,7 +241,7 @@ def main():
           f"established.")
     d = [p_[0] for p_ in st_series.get("ESR", [])]
     y = [p_[1] for p_ in st_series.get("ESR", [])]
-    cp = st.change_point(d, y) if len(y) >= 10 else None
+    cp = st.change_point(d, y) if (st and len(y) >= 10) else None
     if cp and cp["p"] < 0.05:
         split = date.fromordinal(cp["split_day"])
         lo_, hi_ = y[:cp["index"]], y[cp["index"]:]
@@ -272,7 +291,7 @@ def main():
     # --- gut inflammation -------------------------------------------------------
     cal = c.execute("SELECT collect_date, value_raw, flag FROM lab_results "
                     "WHERE analyte='Calprotectin'").fetchall()
-    A("## Gut inflammation — the biggest gap in the record\n")
+    A("## Faecal calprotectin\n")
     for r in cal:
         A(f"Faecal calprotectin **{r['value_raw']} µg/g ({r['flag']})** on "
           f"{r['collect_date']}. The report's own scale: <80 normal, 80–160 "
@@ -280,8 +299,7 @@ def main():
     if len(cal) == 1:
         A(f"\nThat is the **only** calprotectin result in {n_doc} documents — a "
           "single measurement, never repeated in anything held here. It was "
-          "ordered to monitor bowel inflammation, so whether it was ever "
-          "rechecked is the most useful open question in this dataset.\n")
+          "so there is nothing to compare it against.\n")
     elif len(cal) > 1:
         A(f"\n{len(cal)} calprotectin results are on record; the trend between "
           "them is what matters.\n")
@@ -334,11 +352,11 @@ def main():
             A(f"| {r['analyte']} | {r['value_raw']} {r['unit'] or ''} | "
               f"{r['ref_low']}–{r['ref_high']} |")
         if not ab:
-            A("\nNormal iron alongside a chronically low MCV points away from "
-              "iron deficiency and toward something constitutional such as "
-              f"thalassaemia trait — but those studies are from "
-              f"{iron[0]['collect_date']}, well before the recent haemoglobin "
-              "drop, so they do not explain it.\n")
+            A(f"\nIron studies within range on {iron[0]['collect_date']} do "
+              "not support iron deficiency **on that date**. Whether that "
+              "still holds depends on how long ago it was and what has "
+              "happened since — a question for the treating doctor, not for "
+              "this report.\n")
 
 
     # --- everything the labs flagged ---------------------------------------
@@ -364,15 +382,20 @@ def main():
       "through them with that in mind.")
     A("- Reference ranges are quoted from each report, never hard-coded — they "
       "changed between labs and over the years.")
-    A("- The one document with no date is an MRI information leaflet, which "
-      "carries none.\n")
+    undated = c.execute("SELECT doc_type FROM documents WHERE doc_date IS NULL"
+                        ).fetchall()
+    if undated:
+        kinds = ", ".join(sorted({u[0] for u in undated}))
+        A(f"- {len(undated)} document(s) carry no date in their own text "
+          f"({kinds}).\n")
 
-    A("## Still missing\n")
-    A("**No imaging reports at all.** There is an MRI information leaflet in "
-      "the record, so scans have happened, but not one radiology report has "
-      "been exported. For SpA the sacroiliac and spine imaging is the "
-      "structural evidence, and none of it is here. It sits in eHealth "
-      "醫健通 behind a login.\n")
+    n_rad = q1("SELECT COUNT(*) FROM documents WHERE doc_type LIKE '%radiolog%' "
+               "OR doc_type LIKE '%放射%' OR doc_type LIKE '%rad-%'")
+    if n_rad == 0:
+        A("## Not in this dataset\n")
+        A("**No radiology reports were found.** If imaging has been done, those "
+          "reports are held separately and have not been exported here — worth "
+          "knowing before reading any of the above as a complete picture.\n")
 
     made = charts(c)
     if made:
@@ -381,7 +404,7 @@ def main():
             A(f"- `charts/{m}`")
         A("")
 
-    out = HERE / "analysis.md"
+    out = config.output_dir() / "analysis.md"
     out.write_text("\n".join(L) + "\n")
     out.chmod(0o600)          # generated artefacts carry medical data too
     print(f"analysis.md written ({len(L)} lines), charts: {made}")

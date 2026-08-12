@@ -2,6 +2,14 @@
 import re, sys, os, hashlib, subprocess
 from pathlib import Path
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 # Default source is the iCloud pipe folder; pass a directory to take exports
 # from somewhere else (e.g. copied straight off the Mini over Tailscale).
 SRC = Path(next((a for a in sys.argv[1:] if not a.startswith("-")),
@@ -20,6 +28,10 @@ SITES = {
     "Pamela Youde": "PYNEH",
     "Queen Elizabeth": "QEH",
 }
+
+# Visit dates before this are treated as misreads rather than real dates.
+# Override with EARLIEST_RECORD if your records go back further.
+EARLIEST = os.environ.get("EARLIEST_RECORD", "2015-01-01")
 
 MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 DATE_RE = re.compile(r"(\d{1,2})\s*-?\s*(" + "|".join(MONTHS) + r")\s*-?\s*(\d{4})")
@@ -135,8 +147,8 @@ def _candidates(t):
         window = t[max(0, pos - 40):pos]
         if any(b in window for b in BAD_CONTEXT):
             continue          # DOB / print timestamp, not the visit
-        if iso < "2020-01-01":
-            continue          # nothing here predates his HA GO history
+        if iso < EARLIEST:
+            continue          # implausibly old for a visit date; configurable
         keep.append((iso, pos))
     return keep
 

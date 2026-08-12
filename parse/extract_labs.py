@@ -18,6 +18,14 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 SRC = Path(os.environ.get("HAGO_DIR",
                           Path.home() / "repo/personal/medical/HAGO"))
 # The date of birth is printed on every report and must never be mistaken for a
@@ -47,8 +55,13 @@ def iso(d, m, y):
 
 
 def pages(pdf):
-    xml = subprocess.run(["pdftotext", "-bbox-layout", str(pdf), "-"],
-                         capture_output=True, text=True).stdout
+    r = subprocess.run(["pdftotext", "-bbox-layout", str(pdf), "-"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        # an unreadable PDF must not be mistaken for an empty one
+        raise RuntimeError(f"pdftotext failed on {pdf.name}: "
+                           f"{r.stderr.strip()[:200]}")
+    xml = r.stdout
     root = ET.fromstring(xml)
     for page in root.iter(f"{XH}page"):
         ws = []

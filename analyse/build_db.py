@@ -25,6 +25,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "parse"))
 sys.path.insert(0, str(Path(__file__).parent))
 import extract_labs as ex               # noqa: E402
 
+# Load ~/.hago-scraper.env so every stage sees the same paths. Without this
+# only the shell wrappers read it, and one stage writes where the next never
+# looks.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config                              # noqa: E402
+config.load()
+
 HERE = Path(__file__).parent
 # Where the renamed PDFs live, and where to write the database. Both are
 # configurable so the code carries no assumption about one person's setup.
@@ -275,12 +283,22 @@ def main():
 
     # --- lab results, via the verified parser -------------------------------
     rows = []
+    silent = []
     for p in files:
+        got = []
         try:
             for ws in ex.pages(p):
-                rows += ex.extract_page(ws, p.name)
+                got += ex.extract_page(ws, p.name)
         except Exception as e:                      # noqa: BLE001
             print(f"  ! {p.name}: {e}", file=sys.stderr)
+            silent.append(p.name)
+        else:
+            # a lab report that produced no rows is a parser miss, not an
+            # empty report -- surface it rather than losing it quietly
+            if not got and p.stem.split("_")[1:2] and \
+                    p.stem.split("_")[1].startswith("lab-"):
+                silent.append(p.name)
+        rows += got
 
     # Group on the CANONICAL name: 'ESR, automated' and 'ESR,automated' are the
     # same test, and grouping on the raw spelling would let two different values
@@ -337,6 +355,11 @@ def main():
 
     # Validate before replacing the existing database. A parser regression that
     # silently halves the results must not overwrite a good build.
+    if silent:
+        print(f"  ! {len(silent)} lab PDF(s) produced no results — the parser "
+              f"may not handle their layout:", file=sys.stderr)
+        for name in silent[:10]:
+            print(f"      {name}", file=sys.stderr)
     if kept == 0 or n_doc != len(files):
         sys.exit(f"refusing to publish: {n_doc}/{len(files)} documents, "
                  f"{kept} results — left the previous {DB.name} untouched")
@@ -363,8 +386,12 @@ def main():
 
 def pdftext(p):
     import subprocess
-    return subprocess.run(["pdftotext", "-layout", str(p), "-"],
-                          capture_output=True, text=True).stdout
+    r = subprocess.run(["pdftotext", "-layout", str(p), "-"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"pdftotext failed on {p.name}: "
+                           f"{r.stderr.strip()[:200]}")
+    return r.stdout
 
 
 if __name__ == "__main__":

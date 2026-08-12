@@ -11,7 +11,7 @@ from pathlib import Path
 from phone_harness.helpers import screen_info, tap, scroll_screen
 
 YEAR = os.environ.get("YEAR", "2026")
-LEDGER = Path.home() / "rad_done.json"
+LEDGER = Path(os.environ.get("RAD_LEDGER", Path.home() / "rad_done.json"))
 FAST = 0.35        # scroll settle; the 2.5s default makes a sweep take hours
 MAX_DEPTH = 8
 DATE = re.compile(r"\d{4}年\d{2}月\d{2}日")
@@ -24,16 +24,19 @@ NOISE = tuple(x for x in ("主頁", "oHcalth", "eHealth", ACCOUNT, "選擇年份
          "Health", "醫健通") if x)
 
 done = set(json.loads(LEDGER.read_text())) if LEDGER.exists() else set()
-FAILS = Path.home() / "rad_fails.json"
+give_up = set()          # failed too often this run; retried next run
+FAILS = Path(os.environ.get("RAD_LEDGER_FAILS", Path.home() / "rad_fails.json"))
 fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
 
 
 def save_fails():
     FAILS.write_text(json.dumps(fails, ensure_ascii=False))
+    FAILS.chmod(0o600)
 
 
 def save_ledger():
     LEDGER.write_text(json.dumps(sorted(done), ensure_ascii=False))
+    LEDGER.chmod(0o600)      # dates and test names are medical data
 
 
 def back():
@@ -168,7 +171,7 @@ def export(y_pos):
     if not find_zh("Save to Files", exact=True):
         goto_lab()
         return "no share"
-    files_save_to("HAGO")
+    files_save_to(os.environ.get("SAVE_FOLDER", "HAGO"))
     goto_lab()
     return "ok"
 
@@ -195,7 +198,7 @@ def undone_at(depth):
         scroll_screen("up", settle=FAST)
     for y_pos, name, date in rows():
         key = f"{date}|{name}"
-        if key not in done:
+        if key not in done and key not in give_up:
             return (y_pos, key), False
     return None, False
 
@@ -230,8 +233,12 @@ while progressed:
         else:
             fails[key] = fails.get(key, 0) + 1
             if fails[key] >= 3:
-                print(f"  GIVING UP on {key} after {fails[key]} tries")
-                done.add(key)
+                # Skip for the rest of THIS run so it cannot loop, but never
+                # write it to the completed ledger -- that would retire a real
+                # record permanently. A later run retries it.
+                print(f"  giving up on {key} for this run "
+                      f"({fails[key]} failures so far)")
+                give_up.add(key)
             save_fails()
         save_ledger()
         saved += 1 if r == "ok" else 0
