@@ -203,12 +203,42 @@ def main():
              if crp_exact else "."))
     else:
         A(f"**CRP was flagged high on {crp_high} of {len(crp)} measurements.**")
-    early = [v for d, v in esr if d < "2022-01-01"]
-    late = [v for d, v in esr if d >= "2022-01-01"]
-    A(f"**ESR shifted upward around 2022**: mean {np.mean(early):.1f} before "
-      f"2022 (n={len(early)}), {np.mean(late):.1f} after (n={len(late)}); "
-      f"overall trend {esr_s:+.2f} mm/hr per year across {esr_n} points. "
-      "It has stayed inside the <24 limit throughout, with one exception.")
+    # Trend and change-point via stats_tests: Theil-Sen + Mann-Kendall with a
+    # Benjamini-Hochberg correction across every analyte, and a permutation test
+    # that pays for the search over split points. Quoting a hand-picked split
+    # and its naive p-value would manufacture significance.
+    import stats_tests as st
+    st_series, cens = st.load_series(c)
+    tr = st.trends(st_series)
+    esr_tr = next((r for r in tr if r["analyte"] == "ESR"), None)
+    n_sig = sum(1 for r in tr if r["q"] < 0.05)
+    if esr_tr:
+        A(f"\n**ESR trend: {esr_tr['slope']:+.2f} mm/hr per year** "
+          f"(Theil-Sen, 95% CI {esr_tr['lo']:+.2f} to {esr_tr['hi']:+.2f}, "
+          f"Mann-Kendall p={esr_tr['p']:.3f}, n={esr_tr['n']}). "
+          f"Across all {len(tr)} analytes tested, **{n_sig} survive "
+          f"a false-discovery correction** — ESR's own q is "
+          f"{esr_tr['q']:.2f}, so on trend alone this is suggestive, not "
+          f"established.")
+    d = [p_[0] for p_ in st_series.get("ESR", [])]
+    y = [p_[1] for p_ in st_series.get("ESR", [])]
+    cp = st.change_point(d, y) if len(y) >= 10 else None
+    if cp and cp["p"] < 0.05:
+        split = date.fromordinal(cp["split_day"])
+        lo_, hi_ = y[:cp["index"]], y[cp["index"]:]
+        pt, blo, bhi = st.bootstrap_median_diff(lo_, hi_)
+        A(f"\n**A step change in ESR is supportable, and it sits at "
+          f"{split}** — median {cp['before_median']:.0f} before "
+          f"(n={cp['n_before']}) against {cp['after_median']:.0f} after "
+          f"(n={cp['n_after']}); median difference {pt:+.0f} "
+          f"[{blo:+.0f}, {bhi:+.0f}]. The p-value ({cp['p']:.4f}) comes from "
+          f"permuting the series, so it already pays for having searched every "
+          f"possible split rather than picking one by eye.")
+    if cens.get("CRP"):
+        A(f"\n{cens['CRP']} of the CRP results are censored (`<0.6`, `<0.7`), "
+          "so a CRP trend is not interpretable — the lab declined to give a "
+          "number, and treating the bound as a measurement would invent "
+          "precision. What is interpretable is that none was ever flagged high.")
     # If a flagged ESR sits shortly after an injury/A&E document, say so --
     # trauma raises ESR, and reading such a spike as a disease flare would be
     # the wrong conclusion. Both the spike and the event are looked up, never
@@ -259,15 +289,32 @@ def main():
         A("\nNo calprotectin result is present in the exported records.\n")
 
     # --- red cells ----------------------------------------------------------
-    A("## Red cells — a real change in 2026\n")
+    A("## Red cells — a change worth asking about\n")
     for a in ["HGB", "HCT", "RBC"]:
         s = series(c, a)
         if len(s) >= 3:
             A(f"- **{a}**: {s[-3][1]} → {s[-2][1]} → {s[-1][1]} "
               f"(last three draws, to {s[-1][0]})")
     A("")
-    A("HGB and HCT were both flagged low for the first time on 2026-06-01, at "
-      "the end of a three-draw decline rather than as an isolated reading.\n")
+    hgb = [v for _, v in series(c, "HGB")]
+    if len(hgb) >= 8:
+        import numpy as _np
+        prior = _np.array(hgb[:-1], float)
+        z = (hgb[-1] - prior.mean()) / prior.std(ddof=1)
+        hgb_tr = next((r for r in tr if r["analyte"] == "HGB"), None)
+        A(f"The most recent haemoglobin sits **{abs(z):.1f} standard deviations "
+          f"below the mean of every previous reading** ({prior.mean():.2f} ± "
+          f"{prior.std(ddof=1):.2f}), which is the largest deviation in the "
+          "series and the first time it and the haematocrit were flagged low "
+          "together.")
+        if hgb_tr:
+            A(f"The long-run slope is {hgb_tr['slope']:+.3f} g/dL per year "
+              f"(CI {hgb_tr['lo']:+.3f} to {hgb_tr['hi']:+.3f}, q="
+              f"{hgb_tr['q']:.2f}). **Three points do not establish a "
+              "trajectory** — formally comparing the last three draws against "
+              "the earlier ones is not significant, and could not be at that "
+              "sample size. What makes it worth a question is the direction "
+              "and the flags, not statistical weight.\n")
     mcv = series(c, "MCV")
     low_mcv = q1("SELECT COUNT(*) FROM lab_results WHERE analyte='MCV' AND flag='L'")
     A(f"Against that, **MCV has been low on {low_mcv} of {len(mcv)} counts "

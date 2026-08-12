@@ -114,6 +114,32 @@ def parse_ref(raw):
     return low, high, unit
 
 
+# Some tests print an interpretation legend instead of a numeric range
+# ("Negative : < 35 IU/mL", "< 80 ug/g Normal"). Those rows end up with no
+# ref_low/ref_high, and an analysis that only sees the number cannot say whether
+# 11 or 328 is normal. Capture the legend so the threshold is never lost.
+# not anchored to line start: the first legend line usually shares a line with
+# the result itself ("Anti-dsDNA Antibody  11  Negative : < 35 IU/mL")
+LEGEND = re.compile(
+    r"\b(Negative|Positive|Borderline|Normal|Elevated|Equivocal|Indeterminate)"
+    r"\s*:\s*([<>=]\s*[\d.]+[^\n]*?)(?=\s{2,}|\n|$)", re.I)
+
+
+def legend_for(analyte, text):
+    """The interpretation block printed near `analyte`, if there is one."""
+    i = text.find(analyte)
+    if i < 0:
+        return None
+    window = text[i:i + 600]
+    hits = [f"{m.group(1)} {m.group(2).strip()}" for m in LEGEND.finditer(window)]
+    if not hits:
+        # the calprotectin style: a table of thresholds under a heading
+        rows = re.findall(r"([<>]\s*\d[\d.]*\s*\S*)\s+(Normal|Borderline|Elevated)",
+                          window, re.I)
+        hits = [f"{b} {a}" for a, b in rows]
+    return "; ".join(dict.fromkeys(hits))[:300] or None
+
+
 def chunks_of(text, size=1100, overlap=150):
     """Paragraph-ish chunks. Lab sheets are tabular, so split on blank lines
     first and only fall back to hard slicing for very long blocks."""
@@ -168,6 +194,7 @@ CREATE TABLE IF NOT EXISTS lab_results (
     ref_raw      TEXT,
     abnormal     INTEGER,            -- 1 if the lab flagged it
     n_sheets     INTEGER,            -- how many reports agreed on this value
+    interpretation TEXT,              -- legend for tests with no numeric range
     sources      TEXT,
     UNIQUE (collect_date, analyte)
 );
@@ -279,17 +306,25 @@ def main():
         newest = max(group, key=lambda g: g["source"])
         comp, num = parse_value(value_raw)
         low, high, unit = parse_ref(newest["ref"])
+        interp = None
+        if low is None and high is None:
+            src = con.execute("SELECT text FROM documents WHERE filename = ?",
+                              (newest["source"],)).fetchone()
+            if src:
+                interp = legend_for(raw_name, src[0])
         flag = next((g["flag"] for g in group if g["flag"]), "")
         con.execute(
             "INSERT OR REPLACE INTO lab_results (collect_date, analyte,"
             " analyte_raw, category, value_raw, value_num, comparator, unit,"
-            " flag, ref_low, ref_high, ref_raw, abnormal, n_sheets, sources)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " flag, ref_low, ref_high, ref_raw, abnormal, n_sheets,"
+            " interpretation, sources)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (date, analyte, raw_name, OF_CATEGORY.get(analyte), value_raw, num,
              comp, unit, flag, low, high, newest["ref"], int(bool(flag)),
              # count distinct CONTENT: two filenames holding identical bytes are
              # one report, not two independent confirmations
              len({doc_sha.get(g["source"], g["source"]) for g in group}),
+             interp,
              ";".join(sorted({g["source"] for g in group}))))
         kept += 1
 
