@@ -1,12 +1,16 @@
 """Build a demo database from synthetic data — no real records involved.
 
-Used for the screenshots in the README and as a fixture to develop against, so
-nobody has to point the tools at real medical data to see them work, and no
-real values can end up in a public image.
+A fixture to develop and screenshot against, so nobody has to point the tools
+at real medical data to see them work.
 
-The numbers are generated, the name is invented, and the dates are arbitrary.
-They are plausible enough to exercise the UI and the statistics, and mean
-nothing.
+The persona is an invented type 2 diabetes patient on routine follow-up:
+HbA1c, glucose, lipids and kidney function. That profile was chosen precisely
+because it resembles nobody involved in this project — sample data that mirrors
+the author's own condition is not really anonymous.
+
+Every number comes from a seeded random generator, the name is made up, and the
+dates are arbitrary. Plausible enough to exercise the UI and the statistics,
+and describing no one.
 
     python3 demo/make_demo_db.py            # -> demo/demo.db
 """
@@ -23,32 +27,33 @@ sys.path.insert(0, str(HERE.parent / "analyse"))
 import build_db as bd                                   # noqa: E402
 
 DB = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "demo.db"
-RNG = random.Random(20260812)          # fixed seed: the demo is reproducible
+RNG = random.Random(1234)              # fixed seed: the demo is reproducible
 
+# An invented type 2 diabetes follow-up panel.
 # (analyte, unit, ref_low, ref_high, mean, sd, decimals)
 PANEL = [
-    ("ESR", "mm/hr", None, 24.0, 9, 4, 0),
-    ("CRP", "mg/L", None, 5.0, 1.2, 0.6, 1),
-    ("HGB", "g/dL", 13.4, 17.1, 14.4, 0.6, 1),
-    ("HCT", "L/L", 0.400, 0.510, 0.44, 0.02, 3),
-    ("RBC", "x10^12/L", 4.30, 5.90, 5.0, 0.3, 2),
-    ("MCV", "fL", 82.0, 97.0, 88.0, 3.0, 1),
-    ("MCH", "pg", 27.0, 33.0, 30.0, 1.2, 1),
-    ("WBC", "x10^9/L", 3.7, 9.2, 6.2, 1.1, 1),
-    ("PLT", "x10^9/L", 145, 370, 250, 35, 0),
-    ("Creatinine", "umol/L", 60, 110, 80, 8, 0),
-    ("ALT", "U/L", 10, 53, 26, 8, 0),
-    ("Albumin", "g/L", 35, 50, 43, 2, 0),
+    ("HbA1c", "%", 4.8, 6.0, 7.4, 0.5, 1),
+    ("Glucose, spot", "mmol/L", 3.9, 11.0, 8.6, 1.6, 1),
+    ("Cholesterol", "mmol/L", None, 5.2, 4.9, 0.5, 1),
+    ("LDL-Cholesterol", "mmol/L", None, 3.4, 3.1, 0.4, 1),
+    ("HDL-Cholesterol", "mmol/L", 1.0, None, 1.1, 0.15, 1),
+    ("Triglyceride", "mmol/L", None, 1.7, 1.9, 0.4, 1),
+    ("Creatinine", "umol/L", 60, 110, 96, 9, 0),
+    ("Urea", "mmol/L", 3.1, 7.8, 6.2, 0.9, 1),
     ("Sodium", "mmol/L", 136, 145, 140, 2, 0),
-    ("Potassium", "mmol/L", 3.4, 4.8, 4.1, 0.3, 1),
+    ("Potassium", "mmol/L", 3.4, 4.8, 4.2, 0.3, 1),
+    ("ALT", "U/L", 10, 53, 38, 11, 0),
+    ("Albumin", "g/L", 35, 50, 42, 2, 0),
+    ("HGB", "g/dL", 13.4, 17.1, 13.9, 0.6, 1),
+    ("PLT", "x10^9/L", 145, 370, 262, 32, 0),
 ]
 CATEGORY = {a: bd.OF_CATEGORY.get(a) for a, *_ in PANEL}
 
 DOC_TEXT = """Hospital Authority                     Lab No: DEMO0000001
-Demo Hospital                          Name: DOE, JOHN (DEMO)
+Demo Hospital                          Name: SAMPLE, PATIENT (DEMO)
                                        HKID No: A000000(0)
 Chemical Pathology Laboratory          Doctor: DEMO, CLINICIAN
-Clinical Details: demonstration data only
+Clinical Details: Type 2 diabetes, routine follow-up (demonstration data)
 
 This document contains generated sample values for demonstration. It is not a
 medical record and describes nobody. Every figure was produced by a random
@@ -57,7 +62,10 @@ number generator.
 
 
 def draws(n=14):
-    d = date(2026, 6, 1)
+    # An arbitrary anchor, deliberately not derived from any real record. An
+    # earlier version used a real last-draw date, which is exactly the kind of
+    # detail that makes "anonymous" sample data identifiable.
+    d = date(2024, 5, 8) - timedelta(days=RNG.randint(0, 400))
     out = []
     for _ in range(n):
         out.append(d)
