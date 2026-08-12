@@ -56,6 +56,42 @@ LAB_SECTIONS = ["Chemical Pathology", "Haematology", "Microbiology",
 SHORT_DATE = re.compile(r"\b(\d{2})/(\d{2})/(\d{2}(?:\d{2})?)\b")
 
 
+# --- radiology (eHealth 放射紀錄) -----------------------------------------
+# These carry a modality and an exam date rather than a lab section.
+MODALITIES = [
+    ("磁力共振", "MRI"), ("Magnetic Resonance", "MRI"), ("MRI", "MRI"),
+    ("電腦斷層", "CT"), ("Computed Tomography", "CT"),
+    ("超聲", "US"), ("Ultrasound", "US"),
+    ("核子醫學", "NM"), ("Bone scan", "BoneScan"),
+    ("一般放射", "XR"), ("Plain", "XR"), ("Radiograph", "XR"),
+]
+
+
+def is_rad(t):
+    return ("放射" in t or "Radiology" in t or "Examination Report" in t) \
+        and "Laboratory" not in t
+
+
+def rad_kind(t):
+    for needle, tag in MODALITIES:
+        if needle.lower() in t.lower():
+            return "rad-" + tag
+    return "rad"
+
+
+def rad_date(t):
+    """Prefer the exam/registration date printed on the report."""
+    for label in ("Reg Date", "Exam Date", "檢查日期", "Study Date"):
+        i = t.find(label)
+        if i < 0:
+            continue
+        m = DATE_RE.search(t[i:i + 80])
+        if m:
+            d, mon, y = m.groups()
+            return f"{y}-{MONTHS.index(mon)+1:02d}-{int(d):02d}"
+    return date_of(t)
+
+
 def is_lab(t):
     return "Laboratory" in t and any(s in t for s in LAB_SECTIONS)
 
@@ -176,6 +212,10 @@ def site_of(t):
 rows = []
 for p in sorted(SRC.glob("*.pdf")):
     t = text_of(p)
+    if is_rad(t):
+        rows.append((p, rad_date(t), rad_kind(t), site_of(t),
+                     hashlib.sha1(p.read_bytes()).hexdigest()))
+        continue
     if is_lab(t):
         tag = lab_panel(t)
         kind = "lab-" + lab_section(t) + (f"-{tag}" if tag else "")

@@ -79,6 +79,8 @@ knowing:
 - A pending confirmation dialog can swallow taps, and a stray tap in an unknown
   state does something you did not intend. If a run dies, look at the screen
   before relaunching.
+- **Move exported files out only when no sweep is running.** Clearing the
+  transfer folder mid-sweep loses records that are already marked as exported.
 - Run **one sweep at a time**. Concurrent runs fight over the phone and fail in
   ways that look like app faults.
 - Sessions expire after a few hours; log in yourself. Do not attempt to automate

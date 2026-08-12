@@ -51,7 +51,12 @@ No other skill, plugin or MCP server is required.
 6. **Do not weaken `serve.py`'s bind guard.** It refuses to start rather than
    listening somewhere wider than asked. On café wifi a `0.0.0.0` bind publishes
    medical records to strangers.
-7. **Do not commit records.** `.gitignore` blocks `*.pdf`, `*.db`, `*.csv`, but
+7. **Never clear the transfer folder while a sweep is running.** The sweeper
+   ledgers a record the moment it saves, so deleting files mid-run leaves the
+   record marked done with no file to show for it — and it will never be
+   exported again. Stop the sweep first, then move files out. If it happens,
+   remove that key from the ledger so the record is retried.
+8. **Do not commit records.** `.gitignore` blocks `*.pdf`, `*.db`, `*.csv`, but
    check `git status` before committing anyway.
 
 ## Things that will mislead you
