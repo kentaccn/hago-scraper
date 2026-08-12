@@ -20,6 +20,13 @@
   <a href="#limitations--what-this-does-not-capture">Limitations</a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/screenshot-overview.png" alt="Overview: latest draw and trend charts" width="49%">
+  <img src="docs/assets/screenshot-test.png" alt="A single test over time, with trend and next-test estimate" width="49%">
+</p>
+<p align="center"><sub>Screenshots use generated sample data
+(<code>demo/make_demo_db.py</code>) — no real records.</sub></p>
+
 ---
 
 ## Quick start
@@ -53,6 +60,14 @@ python3 analyse/serve.py             # private web UI
 
 **Already have the PDFs?** Skip step 4 — everything from step 5 works on any
 folder of HA lab reports, on any OS with `pdftotext`.
+
+**Just want to look around first?** Build a synthetic database and browse it,
+no medical data required:
+
+```bash
+python3 demo/make_demo_db.py
+MEDICAL_DB=demo/demo.db MEDICAL_OUT=/tmp/demo BIND_MODE=localhost python3 analyse/serve.py
+```
 
 ---
 

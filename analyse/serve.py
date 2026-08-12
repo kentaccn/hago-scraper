@@ -270,7 +270,7 @@ def overview():
                  "own past tests, not a clinical schedule.</div>")
     b.append("<h2>Trends</h2>")
     for png in ("inflammation", "red_cells", "counts"):
-        if (HERE / "charts" / f"{png}.png").exists():
+        if (config.output_dir() / "charts" / f"{png}.png").exists():
             b.append(f"<img src='/charts/{png}.png' alt='{png}'>")
     return page("Medical overview", "".join(b))
 
@@ -589,9 +589,13 @@ class H(BaseHTTPRequestHandler):
                 return self.send(md(HERE / "analysis.md", "Analysis"))
             if u.path.startswith("/charts/"):
                 # only ever serve the generated PNGs, by exact name
+                # charts live with the other generated output, not in the
+                # checkout; serve only real .png files from that one directory
                 name = Path(u.path).name
-                p = HERE / "charts" / name
-                if p.suffix == ".png" and p.parent == HERE / "charts" and p.exists():
+                charts = config.output_dir() / "charts"
+                p = (charts / name).resolve()
+                if (p.suffix == ".png" and p.parent == charts.resolve()
+                        and p.is_file() and not p.is_symlink()):
                     return self.send(p.read_bytes(), "image/png")
             self.send(page("Not found", "<p>No such page.</p>"), code=404)
         except Exception:                                        # noqa: BLE001
