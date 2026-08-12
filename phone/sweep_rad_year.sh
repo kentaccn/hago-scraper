@@ -4,6 +4,8 @@
 # just relaunch rather than trying to make one long run bulletproof.
 YEAR=$1
 export PATH=$HOME/.local/bin:$PATH
+# HA_ACCOUNT_NAME / DOB_YEAR live here, outside the repo
+[ -f "$HOME/.hago-scraper.env" ] && . "$HOME/.hago-scraper.env"
 count() { python3 -c "
 import json, os
 f = os.path.expanduser(~/rad_done.json)

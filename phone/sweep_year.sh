@@ -4,6 +4,8 @@
 # just relaunch rather than trying to make one long run bulletproof.
 YEAR=$1
 export PATH=$HOME/.local/bin:$PATH
+# HA_ACCOUNT_NAME / DOB_YEAR live here, outside the repo
+[ -f "$HOME/.hago-scraper.env" ] && . "$HOME/.hago-scraper.env"
 count() { python3 -c "import json;print(len(json.load(open(\"$HOME/lab_done.json\"))))"; }
 dry=0
 for i in $(seq 1 20); do
